@@ -1,0 +1,9 @@
+name: catboost-env
+dependencies:
+  - python=3.8
+  - pip:
+    - azureml-defaults
+    - catboost
+    - joblib
+    - numpy
+    - pandas

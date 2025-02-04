@@ -1,0 +1,456 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Preprocessing"
+      ],
+      "metadata": {
+        "nteract": {
+          "transient": {
+            "deleting": false
+          }
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import pandas as pd\n",
+        "from sklearn.model_selection import train_test_split\n",
+        "from sklearn.preprocessing import StandardScaler, LabelEncoder\n",
+        "\n",
+        "# Load dataset from Azure ML\n",
+        "from azureml.core import Workspace, Dataset\n",
+        "\n",
+        "ws = Workspace.from_config()\n",
+        "dataset = Dataset.get_by_name(ws, name=\"stroke-prediction-dataset\")\n",
+        "df = dataset.to_pandas_dataframe()\n",
+        "\n",
+        "# Drop irrelevant columns\n",
+        "if \"id\" in df.columns:\n",
+        "    df.drop(columns=[\"id\"], inplace=True)\n",
+        "\n",
+        "# Replace \"N/A\" and missing values properly\n",
+        "df.replace(\"N/A\", None, inplace=True)  # Ensure \"N/A\" is treated as None\n",
+        "df.fillna(df.select_dtypes(include=['number']).mean(), inplace=True)  # Fill missing numerical values with mean\n",
+        "df.fillna(df.select_dtypes(include=['object']).mode().iloc[0], inplace=True)  # Fill missing categorical values with mode\n",
+        "\n",
+        "# Encode categorical features\n",
+        "label_encoders = {}\n",
+        "categorical_cols = [\"gender\", \"ever_married\", \"work_type\", \"Residence_type\", \"smoking_status\"]\n",
+        "for col in categorical_cols:\n",
+        "    df[col] = df[col].astype(str)  # Convert to string to avoid NAType issues\n",
+        "    le = LabelEncoder()\n",
+        "    df[col] = le.fit_transform(df[col])\n",
+        "    label_encoders[col] = le\n",
+        "\n",
+        "# Normalize numerical columns\n",
+        "scaler = StandardScaler()\n",
+        "numerical_cols = [\"age\", \"avg_glucose_level\", \"bmi\"]\n",
+        "df[numerical_cols] = scaler.fit_transform(df[numerical_cols])\n",
+        "\n",
+        "# Split into train & test sets\n",
+        "train, test = train_test_split(df, test_size=0.2, random_state=42)\n",
+        "\n",
+        "# Save preprocessed data\n",
+        "train.to_csv(\"train_data.csv\", index=False)\n",
+        "test.to_csv(\"test_data.csv\", index=False)\n",
+        "\n",
+        "print(\"✅ Preprocessing complete. Train & Test datasets saved.\")\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "{'infer_column_types': 'False', 'activity': 'to_pandas_dataframe'}\n{'infer_column_types': 'False', 'activity': 'to_pandas_dataframe', 'activityApp': 'TabularDataset'}\n✅ Preprocessing complete. Train & Test datasets saved.\n"
+        }
+      ],
+      "execution_count": 2,
+      "metadata": {
+        "gather": {
+          "logged": 1738417341516
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print(train.head())\n",
+        "print(test.head())\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "      gender       age  hypertension  heart_disease  ever_married  work_type  \\\n802        1  1.582163             0              0             1          3   \n3927       0  0.830297             0              0             1          2   \n2337       0 -0.983025             0              0             0          2   \n3910       1 -0.540751             0              0             1          0   \n1886       0 -0.540751             0              0             0          2   \n\n      Residence_type  avg_glucose_level       bmi  smoking_status  stroke  \n802                0           0.143384 -0.054183               1       0  \n3927               1          -0.393728  0.940938               0       0  \n2337               0          -1.029783  0.609231               2       0  \n3910               1          -0.893296  0.188219               1       0  \n1886               0          -1.027354 -1.151367               2       0  \n      gender       age  hypertension  heart_disease  ever_married  work_type  \\\n4688       1 -0.540751             0              0             0          3   \n4478       1 -0.142705             0              0             1          3   \n3849       0 -1.557980             0              0             0          4   \n4355       0  1.582163             1              0             1          3   \n3826       0  1.405253             0              0             1          0   \n\n      Residence_type  avg_glucose_level       bmi  smoking_status  stroke  \n4688               0          -0.912069 -0.755870               0       0  \n4478               0          -0.902351 -0.079699               2       0  \n3849               1          -0.700713 -0.819660               0       0  \n4355               0          -0.651684 -1.202399               2       0  \n3826               0          -0.251279 -0.220036               2       0  \n"
+        }
+      ],
+      "execution_count": 3,
+      "metadata": {
+        "gather": {
+          "logged": 1738417341608
+        }
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Training the model"
+      ],
+      "metadata": {
+        "nteract": {
+          "transient": {
+            "deleting": false
+          }
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!pip install catboost"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "Requirement already satisfied: catboost in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (1.2.7)\r\nRequirement already satisfied: numpy<2.0,>=1.16.0 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from catboost) (1.23.5)\r\nRequirement already satisfied: scipy in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from catboost) (1.10.1)\r\nRequirement already satisfied: matplotlib in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from catboost) (3.6.3)\r\nRequirement already satisfied: six in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from catboost) (1.16.0)\r\nRequirement already satisfied: pandas>=0.24 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from catboost) (1.3.5)\r\nRequirement already satisfied: graphviz in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from catboost) (0.20.3)\r\nRequirement already satisfied: plotly in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from catboost) (5.24.1)\r\nRequirement already satisfied: python-dateutil>=2.7.3 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from pandas>=0.24->catboost) (2.9.0.post0)\r\nRequirement already satisfied: pytz>=2017.3 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from pandas>=0.24->catboost) (2022.5)\r\nRequirement already satisfied: contourpy>=1.0.1 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from matplotlib->catboost) (1.2.1)\r\nRequirement already satisfied: pillow>=6.2.0 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from matplotlib->catboost) (9.2.0)\r\nRequirement already satisfied: kiwisolver>=1.0.1 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from matplotlib->catboost) (1.4.5)\r\nRequirement already satisfied: pyparsing>=2.2.1 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from matplotlib->catboost) (3.1.2)\r\nRequirement already satisfied: fonttools>=4.22.0 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from matplotlib->catboost) (4.51.0)\r\nRequirement already satisfied: packaging>=20.0 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from matplotlib->catboost) (24.1)\r\nRequirement already satisfied: cycler>=0.10 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from matplotlib->catboost) (0.12.1)\r\nRequirement already satisfied: tenacity>=6.2.0 in /anaconda/envs/azureml_py38/lib/python3.10/site-packages (from plotly->catboost) (9.0.0)\r\n"
+        }
+      ],
+      "execution_count": 3,
+      "metadata": {}
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import sys\n",
+        "!{sys.executable} -m pip install catboost\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "Requirement already satisfied: catboost in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (1.2.7)\r\nRequirement already satisfied: graphviz in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from catboost) (0.20.3)\r\nRequirement already satisfied: matplotlib in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from catboost) (3.9.2)\r\nRequirement already satisfied: numpy<2.0,>=1.16.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from catboost) (1.23.5)\r\nRequirement already satisfied: pandas>=0.24 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from catboost) (1.3.5)\r\nRequirement already satisfied: scipy in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from catboost) (1.14.1)\r\nRequirement already satisfied: plotly in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from catboost) (6.0.0)\r\nRequirement already satisfied: six in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from catboost) (1.16.0)\r\nRequirement already satisfied: python-dateutil>=2.7.3 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from pandas>=0.24->catboost) (2.9.0)\r\nRequirement already satisfied: pytz>=2017.3 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from pandas>=0.24->catboost) (2024.2)\r\nRequirement already satisfied: contourpy>=1.0.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib->catboost) (1.3.0)\r\nRequirement already satisfied: cycler>=0.10 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib->catboost) (0.12.1)\r\nRequirement already satisfied: fonttools>=4.22.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib->catboost) (4.53.1)\r\nRequirement already satisfied: kiwisolver>=1.3.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib->catboost) (1.4.7)\r\nRequirement already satisfied: packaging>=20.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib->catboost) (24.1)\r\nRequirement already satisfied: pillow>=8 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib->catboost) (10.4.0)\r\nRequirement already satisfied: pyparsing>=2.3.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib->catboost) (3.1.4)\r\nRequirement already satisfied: narwhals>=1.15.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from plotly->catboost) (1.24.1)\r\n"
+        }
+      ],
+      "execution_count": 4,
+      "metadata": {
+        "gather": {
+          "logged": 1738356114388
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import catboost\n",
+        "print(\"CatBoost works.\")\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "CatBoost works.\n"
+        }
+      ],
+      "execution_count": 5,
+      "metadata": {
+        "gather": {
+          "logged": 1738356116709
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import sys\n",
+        "!{sys.executable} -m pip install mlflow[azureml]\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "Requirement already satisfied: mlflow[azureml] in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (2.16.2)\n\u001b[33mWARNING: mlflow 2.16.2 does not provide the extra 'azureml'\u001b[0m\u001b[33m\n\u001b[0mRequirement already satisfied: mlflow-skinny==2.16.2 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (2.16.2)\nRequirement already satisfied: Flask<4 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (3.0.3)\nRequirement already satisfied: alembic!=1.10.0,<2 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (1.13.2)\nRequirement already satisfied: docker<8,>=4.0.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (7.1.0)\nRequirement already satisfied: graphene<4 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (3.3)\nRequirement already satisfied: markdown<4,>=3.3 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (3.7)\nRequirement already satisfied: matplotlib<4 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (3.9.2)\nRequirement already satisfied: numpy<3 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (1.23.5)\nRequirement already satisfied: pandas<3 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (1.3.5)\nRequirement already satisfied: pyarrow<18,>=4.0.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (17.0.0)\nRequirement already satisfied: scikit-learn<2 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (1.5.2)\nRequirement already satisfied: scipy<2 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (1.14.1)\nRequirement already satisfied: sqlalchemy<3,>=1.4.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (2.0.35)\nRequirement already satisfied: Jinja2<4,>=2.11 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (3.1.4)\nRequirement already satisfied: gunicorn<24 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow[azureml]) (23.0.0)\nRequirement already satisfied: cachetools<6,>=5.0.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (5.5.0)\nRequirement already satisfied: click<9,>=7.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (8.1.7)\nRequirement already satisfied: cloudpickle<4 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (2.2.1)\nRequirement already satisfied: databricks-sdk<1,>=0.20.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (0.32.3)\nRequirement already satisfied: gitpython<4,>=3.1.9 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (3.1.43)\nRequirement already satisfied: importlib-metadata!=4.7.0,<9,>=3.7.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (8.4.0)\nRequirement already satisfied: opentelemetry-api<3,>=1.9.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (1.27.0)\nRequirement already satisfied: opentelemetry-sdk<3,>=1.9.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (1.27.0)\nRequirement already satisfied: packaging<25 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (24.1)\nRequirement already satisfied: protobuf<6,>=3.12.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (5.28.2)\nRequirement already satisfied: pyyaml<7,>=5.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (6.0.2)\nRequirement already satisfied: requests<3,>=2.17.3 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (2.32.3)\nRequirement already satisfied: sqlparse<1,>=0.4.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from mlflow-skinny==2.16.2->mlflow[azureml]) (0.5.1)\nRequirement already satisfied: Mako in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from alembic!=1.10.0,<2->mlflow[azureml]) (1.3.5)\nRequirement already satisfied: typing-extensions>=4 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from alembic!=1.10.0,<2->mlflow[azureml]) (4.12.2)\nRequirement already satisfied: urllib3>=1.26.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from docker<8,>=4.0.0->mlflow[azureml]) (2.2.3)\nRequirement already satisfied: Werkzeug>=3.0.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from Flask<4->mlflow[azureml]) (3.0.4)\nRequirement already satisfied: itsdangerous>=2.1.2 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from Flask<4->mlflow[azureml]) (2.2.0)\nRequirement already satisfied: blinker>=1.6.2 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from Flask<4->mlflow[azureml]) (1.8.2)\nRequirement already satisfied: graphql-core<3.3,>=3.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from graphene<4->mlflow[azureml]) (3.2.4)\nRequirement already satisfied: graphql-relay<3.3,>=3.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from graphene<4->mlflow[azureml]) (3.2.0)\nRequirement already satisfied: aniso8601<10,>=8 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from graphene<4->mlflow[azureml]) (9.0.1)\nRequirement already satisfied: MarkupSafe>=2.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from Jinja2<4,>=2.11->mlflow[azureml]) (2.1.5)\nRequirement already satisfied: contourpy>=1.0.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib<4->mlflow[azureml]) (1.3.0)\nRequirement already satisfied: cycler>=0.10 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib<4->mlflow[azureml]) (0.12.1)\nRequirement already satisfied: fonttools>=4.22.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib<4->mlflow[azureml]) (4.53.1)\nRequirement already satisfied: kiwisolver>=1.3.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib<4->mlflow[azureml]) (1.4.7)\nRequirement already satisfied: pillow>=8 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib<4->mlflow[azureml]) (10.4.0)\nRequirement already satisfied: pyparsing>=2.3.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib<4->mlflow[azureml]) (3.1.4)\nRequirement already satisfied: python-dateutil>=2.7 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from matplotlib<4->mlflow[azureml]) (2.9.0)\nRequirement already satisfied: pytz>=2017.3 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from pandas<3->mlflow[azureml]) (2024.2)\nRequirement already satisfied: joblib>=1.2.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from scikit-learn<2->mlflow[azureml]) (1.4.2)\nRequirement already satisfied: threadpoolctl>=3.1.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from scikit-learn<2->mlflow[azureml]) (3.5.0)\nRequirement already satisfied: greenlet!=0.4.17 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from sqlalchemy<3,>=1.4.0->mlflow[azureml]) (3.1.1)\nRequirement already satisfied: google-auth~=2.0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from databricks-sdk<1,>=0.20.0->mlflow-skinny==2.16.2->mlflow[azureml]) (2.35.0)\nRequirement already satisfied: gitdb<5,>=4.0.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from gitpython<4,>=3.1.9->mlflow-skinny==2.16.2->mlflow[azureml]) (4.0.11)\nRequirement already satisfied: zipp>=0.5 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from importlib-metadata!=4.7.0,<9,>=3.7.0->mlflow-skinny==2.16.2->mlflow[azureml]) (3.20.2)\nRequirement already satisfied: deprecated>=1.2.6 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from opentelemetry-api<3,>=1.9.0->mlflow-skinny==2.16.2->mlflow[azureml]) (1.2.14)\nRequirement already satisfied: opentelemetry-semantic-conventions==0.48b0 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from opentelemetry-sdk<3,>=1.9.0->mlflow-skinny==2.16.2->mlflow[azureml]) (0.48b0)\nRequirement already satisfied: six>=1.5 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from python-dateutil>=2.7->matplotlib<4->mlflow[azureml]) (1.16.0)\nRequirement already satisfied: charset-normalizer<4,>=2 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from requests<3,>=2.17.3->mlflow-skinny==2.16.2->mlflow[azureml]) (3.3.2)\nRequirement already satisfied: idna<4,>=2.5 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from requests<3,>=2.17.3->mlflow-skinny==2.16.2->mlflow[azureml]) (3.10)\nRequirement already satisfied: certifi>=2017.4.17 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from requests<3,>=2.17.3->mlflow-skinny==2.16.2->mlflow[azureml]) (2024.8.30)\nRequirement already satisfied: wrapt<2,>=1.10 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from deprecated>=1.2.6->opentelemetry-api<3,>=1.9.0->mlflow-skinny==2.16.2->mlflow[azureml]) (1.16.0)\nRequirement already satisfied: smmap<6,>=3.0.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from gitdb<5,>=4.0.1->gitpython<4,>=3.1.9->mlflow-skinny==2.16.2->mlflow[azureml]) (5.0.1)\nRequirement already satisfied: pyasn1-modules>=0.2.1 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from google-auth~=2.0->databricks-sdk<1,>=0.20.0->mlflow-skinny==2.16.2->mlflow[azureml]) (0.4.1)\nRequirement already satisfied: rsa<5,>=3.1.4 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from google-auth~=2.0->databricks-sdk<1,>=0.20.0->mlflow-skinny==2.16.2->mlflow[azureml]) (4.9)\nRequirement already satisfied: pyasn1<0.7.0,>=0.4.6 in /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages (from pyasn1-modules>=0.2.1->google-auth~=2.0->databricks-sdk<1,>=0.20.0->mlflow-skinny==2.16.2->mlflow[azureml]) (0.6.1)\n"
+        }
+      ],
+      "execution_count": 6,
+      "metadata": {
+        "gather": {
+          "logged": 1738356121387
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import sys\n",
+        "!{sys.executable} -m pip show mlflow"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "Name: mlflow\r\nVersion: 2.16.2\r\nSummary: MLflow is an open source platform for the complete machine learning lifecycle\r\nHome-page: https://mlflow.org\r\nAuthor: \r\nAuthor-email: \r\nLicense: Copyright 2018 Databricks, Inc.  All rights reserved.\r\n        \r\n                                        Apache License\r\n                                   Version 2.0, January 2004\r\n                                http://www.apache.org/licenses/\r\n        \r\n           TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\r\n        \r\n           1. Definitions.\r\n        \r\n              \"License\" shall mean the terms and conditions for use, reproduction,\r\n              and distribution as defined by Sections 1 through 9 of this document.\r\n        \r\n              \"Licensor\" shall mean the copyright owner or entity authorized by\r\n              the copyright owner that is granting the License.\r\n        \r\n              \"Legal Entity\" shall mean the union of the acting entity and all\r\n              other entities that control, are controlled by, or are under common\r\n              control with that entity. For the purposes of this definition,\r\n              \"control\" means (i) the power, direct or indirect, to cause the\r\n              direction or management of such entity, whether by contract or\r\n              otherwise, or (ii) ownership of fifty percent (50%) or more of the\r\n              outstanding shares, or (iii) beneficial ownership of such entity.\r\n        \r\n              \"You\" (or \"Your\") shall mean an individual or Legal Entity\r\n              exercising permissions granted by this License.\r\n        \r\n              \"Source\" form shall mean the preferred form for making modifications,\r\n              including but not limited to software source code, documentation\r\n              source, and configuration files.\r\n        \r\n              \"Object\" form shall mean any form resulting from mechanical\r\n              transformation or translation of a Source form, including but\r\n              not limited to compiled object code, generated documentation,\r\n              and conversions to other media types.\r\n        \r\n              \"Work\" shall mean the work of authorship, whether in Source or\r\n              Object form, made available under the License, as indicated by a\r\n              copyright notice that is included in or attached to the work\r\n              (an example is provided in the Appendix below).\r\n        \r\n              \"Derivative Works\" shall mean any work, whether in Source or Object\r\n              form, that is based on (or derived from) the Work and for which the\r\n              editorial revisions, annotations, elaborations, or other modifications\r\n              represent, as a whole, an original work of authorship. For the purposes\r\n              of this License, Derivative Works shall not include works that remain\r\n              separable from, or merely link (or bind by name) to the interfaces of,\r\n              the Work and Derivative Works thereof.\r\n        \r\n              \"Contribution\" shall mean any work of authorship, including\r\n              the original version of the Work and any modifications or additions\r\n              to that Work or Derivative Works thereof, that is intentionally\r\n              submitted to Licensor for inclusion in the Work by the copyright owner\r\n              or by an individual or Legal Entity authorized to submit on behalf of\r\n              the copyright owner. For the purposes of this definition, \"submitted\"\r\n              means any form of electronic, verbal, or written communication sent\r\n              to the Licensor or its representatives, including but not limited to\r\n              communication on electronic mailing lists, source code control systems,\r\n              and issue tracking systems that are managed by, or on behalf of, the\r\n              Licensor for the purpose of discussing and improving the Work, but\r\n              excluding communication that is conspicuously marked or otherwise\r\n              designated in writing by the copyright owner as \"Not a Contribution.\"\r\n        \r\n              \"Contributor\" shall mean Licensor and any individual or Legal Entity\r\n              on behalf of whom a Contribution has been received by Licensor and\r\n              subsequently incorporated within the Work.\r\n        \r\n           2. Grant of Copyright License. Subject to the terms and conditions of\r\n              this License, each Contributor hereby grants to You a perpetual,\r\n              worldwide, non-exclusive, no-charge, royalty-free, irrevocable\r\n              copyright license to reproduce, prepare Derivative Works of,\r\n              publicly display, publicly perform, sublicense, and distribute the\r\n              Work and such Derivative Works in Source or Object form.\r\n        \r\n           3. Grant of Patent License. Subject to the terms and conditions of\r\n              this License, each Contributor hereby grants to You a perpetual,\r\n              worldwide, non-exclusive, no-charge, royalty-free, irrevocable\r\n              (except as stated in this section) patent license to make, have made,\r\n              use, offer to sell, sell, import, and otherwise transfer the Work,\r\n              where such license applies only to those patent claims licensable\r\n              by such Contributor that are necessarily infringed by their\r\n              Contribution(s) alone or by combination of their Contribution(s)\r\n              with the Work to which such Contribution(s) was submitted. If You\r\n              institute patent litigation against any entity (including a\r\n              cross-claim or counterclaim in a lawsuit) alleging that the Work\r\n              or a Contribution incorporated within the Work constitutes direct\r\n              or contributory patent infringement, then any patent licenses\r\n              granted to You under this License for that Work shall terminate\r\n              as of the date such litigation is filed.\r\n        \r\n           4. Redistribution. You may reproduce and distribute copies of the\r\n              Work or Derivative Works thereof in any medium, with or without\r\n              modifications, and in Source or Object form, provided that You\r\n              meet the following conditions:\r\n        \r\n              (a) You must give any other recipients of the Work or\r\n                  Derivative Works a copy of this License; and\r\n        \r\n              (b) You must cause any modified files to carry prominent notices\r\n                  stating that You changed the files; and\r\n        \r\n              (c) You must retain, in the Source form of any Derivative Works\r\n                  that You distribute, all copyright, patent, trademark, and\r\n                  attribution notices from the Source form of the Work,\r\n                  excluding those notices that do not pertain to any part of\r\n                  the Derivative Works; and\r\n        \r\n              (d) If the Work includes a \"NOTICE\" text file as part of its\r\n                  distribution, then any Derivative Works that You distribute must\r\n                  include a readable copy of the attribution notices contained\r\n                  within such NOTICE file, excluding those notices that do not\r\n                  pertain to any part of the Derivative Works, in at least one\r\n                  of the following places: within a NOTICE text file distributed\r\n                  as part of the Derivative Works; within the Source form or\r\n                  documentation, if provided along with the Derivative Works; or,\r\n                  within a display generated by the Derivative Works, if and\r\n                  wherever such third-party notices normally appear. The contents\r\n                  of the NOTICE file are for informational purposes only and\r\n                  do not modify the License. You may add Your own attribution\r\n                  notices within Derivative Works that You distribute, alongside\r\n                  or as an addendum to the NOTICE text from the Work, provided\r\n                  that such additional attribution notices cannot be construed\r\n                  as modifying the License.\r\n        \r\n              You may add Your own copyright statement to Your modifications and\r\n              may provide additional or different license terms and conditions\r\n              for use, reproduction, or distribution of Your modifications, or\r\n              for any such Derivative Works as a whole, provided Your use,\r\n              reproduction, and distribution of the Work otherwise complies with\r\n              the conditions stated in this License.\r\n        \r\n           5. Submission of Contributions. Unless You explicitly state otherwise,\r\n              any Contribution intentionally submitted for inclusion in the Work\r\n              by You to the Licensor shall be under the terms and conditions of\r\n              this License, without any additional terms or conditions.\r\n              Notwithstanding the above, nothing herein shall supersede or modify\r\n              the terms of any separate license agreement you may have executed\r\n              with Licensor regarding such Contributions.\r\n        \r\n           6. Trademarks. This License does not grant permission to use the trade\r\n              names, trademarks, service marks, or product names of the Licensor,\r\n              except as required for reasonable and customary use in describing the\r\n              origin of the Work and reproducing the content of the NOTICE file.\r\n        \r\n           7. Disclaimer of Warranty. Unless required by applicable law or\r\n              agreed to in writing, Licensor provides the Work (and each\r\n              Contributor provides its Contributions) on an \"AS IS\" BASIS,\r\n              WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\r\n              implied, including, without limitation, any warranties or conditions\r\n              of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\r\n              PARTICULAR PURPOSE. You are solely responsible for determining the\r\n              appropriateness of using or redistributing the Work and assume any\r\n              risks associated with Your exercise of permissions under this License.\r\n        \r\n           8. Limitation of Liability. In no event and under no legal theory,\r\n              whether in tort (including negligence), contract, or otherwise,\r\n              unless required by applicable law (such as deliberate and grossly\r\n              negligent acts) or agreed to in writing, shall any Contributor be\r\n              liable to You for damages, including any direct, indirect, special,\r\n              incidental, or consequential damages of any character arising as a\r\n              result of this License or out of the use or inability to use the\r\n              Work (including but not limited to damages for loss of goodwill,\r\n              work stoppage, computer failure or malfunction, or any and all\r\n              other commercial damages or losses), even if such Contributor\r\n              has been advised of the possibility of such damages.\r\n        \r\n           9. Accepting Warranty or Additional Liability. While redistributing\r\n              the Work or Derivative Works thereof, You may choose to offer,\r\n              and charge a fee for, acceptance of support, warranty, indemnity,\r\n              or other liability obligations and/or rights consistent with this\r\n              License. However, in accepting such obligations, You may act only\r\n              on Your own behalf and on Your sole responsibility, not on behalf\r\n              of any other Contributor, and only if You agree to indemnify,\r\n              defend, and hold each Contributor harmless for any liability\r\n              incurred by, or claims asserted against, such Contributor by reason\r\n              of your accepting any such warranty or additional liability.\r\n        \r\n           END OF TERMS AND CONDITIONS\r\n           APPENDIX: How to apply the Apache License to your work.\r\n        \r\n              To apply the Apache License to your work, attach the following\r\n              boilerplate notice, with the fields enclosed by brackets \"[]\"\r\n              replaced with your own identifying information. (Don't include\r\n              the brackets!)  The text should be enclosed in the appropriate\r\n              comment syntax for the file format. We also recommend that a\r\n              file or class name and description of purpose be included on the\r\n              same \"printed page\" as the copyright notice for easier\r\n              identification within third-party archives.\r\n        \r\n           Copyright [yyyy] [name of copyright owner]\r\n        \r\n           Licensed under the Apache License, Version 2.0 (the \"License\");\r\n           you may not use this file except in compliance with the License.\r\n           You may obtain a copy of the License at\r\n        \r\n               http://www.apache.org/licenses/LICENSE-2.0\r\n        \r\n           Unless required by applicable law or agreed to in writing, software\r\n           distributed under the License is distributed on an \"AS IS\" BASIS,\r\n           WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\r\n           See the License for the specific language governing permissions and\r\n           limitations under the License.\r\n        \r\nLocation: /anaconda/envs/azureml_py310_sdkv2/lib/python3.10/site-packages\r\nRequires: alembic, docker, Flask, graphene, gunicorn, Jinja2, markdown, matplotlib, mlflow-skinny, numpy, pandas, pyarrow, scikit-learn, scipy, sqlalchemy\r\nRequired-by: \r\n"
+        }
+      ],
+      "execution_count": 7,
+      "metadata": {
+        "gather": {
+          "logged": 1738356132219
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import mlflow\n",
+        "# import mlflow.azureml\n",
+        "\n",
+        "print(\"✅ MLflow is working!\")\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "✅ MLflow is working!\n"
+        }
+      ],
+      "execution_count": 11,
+      "metadata": {
+        "gather": {
+          "logged": 1738356150262
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import mlflow\n",
+        "from azureml.core import Workspace\n",
+        "\n",
+        "# Connect to Azure ML Workspace\n",
+        "ws = Workspace.from_config()\n",
+        "\n",
+        "# Set MLflow Tracking URI (DO NOT use \"azureml://mlflow\")\n",
+        "mlflow.set_tracking_uri(ws.get_mlflow_tracking_uri())\n",
+        "\n",
+        "# Set experiment name\n",
+        "mlflow.set_experiment(\"catboost-thrombosis-prediction\")\n",
+        "\n",
+        "print(\"✅ MLflow is now connected to Azure ML!\")\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "✅ MLflow is now connected to Azure ML!\n"
+        }
+      ],
+      "execution_count": 17,
+      "metadata": {
+        "gather": {
+          "logged": 1738356361844
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import mlflow\n",
+        "\n",
+        "with mlflow.start_run():\n",
+        "    mlflow.log_param(\"test_param\", 123)\n",
+        "    mlflow.log_metric(\"test_accuracy\", 0.95)\n",
+        "\n",
+        "print(\"✅ MLflow test successful! Check Azure ML Studio → Experiments.\")\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": "2025/01/31 20:46:04 INFO mlflow.tracking._tracking_service.client: 🏃 View run clever_pillow_rp69zj6j at: https://westeurope.api.azureml.ms/mlflow/v2.0/subscriptions/a9e6b3ce-7394-4a87-9482-c314c87e5743/resourceGroups/mlops-simple-flow/providers/Microsoft.MachineLearningServices/workspaces/mlops-simple-flow/#/experiments/e6dd27e2-d888-4c3f-9d31-c4d93c893e96/runs/fe4dbcdc-962c-456c-9ec1-cf6d0e109e00.\n2025/01/31 20:46:04 INFO mlflow.tracking._tracking_service.client: 🧪 View experiment at: https://westeurope.api.azureml.ms/mlflow/v2.0/subscriptions/a9e6b3ce-7394-4a87-9482-c314c87e5743/resourceGroups/mlops-simple-flow/providers/Microsoft.MachineLearningServices/workspaces/mlops-simple-flow/#/experiments/e6dd27e2-d888-4c3f-9d31-c4d93c893e96.\n"
+        },
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "✅ MLflow test successful! Check Azure ML Studio → Experiments.\n"
+        }
+      ],
+      "execution_count": 18,
+      "metadata": {
+        "gather": {
+          "logged": 1738356364995
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import pandas as pd\n",
+        "import mlflow\n",
+        "import mlflow.catboost\n",
+        "from azureml.core import Workspace\n",
+        "from catboost import CatBoostClassifier\n",
+        "from sklearn.model_selection import train_test_split\n",
+        "from sklearn.metrics import accuracy_score, classification_report\n",
+        "\n",
+        "# ✅ Step 1: Connect to Azure ML Workspace & Set MLflow Tracking\n",
+        "ws = Workspace.from_config()\n",
+        "mlflow.set_tracking_uri(ws.get_mlflow_tracking_uri())\n",
+        "mlflow.set_experiment(\"catboost-thrombosis-prediction\")  # Experiment name in Azure ML\n",
+        "\n",
+        "print(\"✅ MLflow is now connected to Azure ML!\")\n",
+        "\n",
+        "# ✅ Step 2: Load Preprocessed Dataset\n",
+        "train = pd.read_csv(\"train_data.csv\")\n",
+        "test = pd.read_csv(\"test_data.csv\")\n",
+        "\n",
+        "# Define features & target variable\n",
+        "X_train = train.drop(columns=[\"stroke\"])  # Features\n",
+        "y_train = train[\"stroke\"]                 # Target\n",
+        "X_test = test.drop(columns=[\"stroke\"])\n",
+        "y_test = test[\"stroke\"]\n",
+        "\n",
+        "# Identify categorical features\n",
+        "categorical_cols = [\"gender\", \"ever_married\", \"work_type\", \"Residence_type\", \"smoking_status\"]\n",
+        "\n",
+        "# ✅ Step 3: Start MLflow Run & Train CatBoost Model\n",
+        "with mlflow.start_run():\n",
+        "    # Log hyperparameters\n",
+        "    mlflow.log_param(\"iterations\", 500)\n",
+        "    mlflow.log_param(\"learning_rate\", 0.1)\n",
+        "    mlflow.log_param(\"depth\", 6)\n",
+        "\n",
+        "    # Train the CatBoost model\n",
+        "    model = CatBoostClassifier(\n",
+        "        iterations=500, \n",
+        "        learning_rate=0.1, \n",
+        "        depth=6, \n",
+        "        cat_features=categorical_cols, \n",
+        "        verbose=100\n",
+        "    )\n",
+        "    model.fit(X_train, y_train)\n",
+        "\n",
+        "    # Make predictions\n",
+        "    y_pred = model.predict(X_test)\n",
+        "\n",
+        "    # Evaluate the model\n",
+        "    accuracy = accuracy_score(y_test, y_pred)\n",
+        "    print(f\"✅ CatBoost Accuracy: {accuracy:.4f}\")\n",
+        "    print(\"Classification Report:\\n\", classification_report(y_test, y_pred))\n",
+        "\n",
+        "    # Log metrics to MLflow\n",
+        "    mlflow.log_metric(\"accuracy\", accuracy)\n",
+        "\n",
+        "    # Save the trained model locally\n",
+        "    model.save_model(\"catboost_model.cbm\")\n",
+        "\n",
+        "    # Log the model to MLflow\n",
+        "    mlflow.catboost.log_model(model, \"catboost_model\")\n",
+        "\n",
+        "print(\"✅ Model training and logging to MLflow complete!\")\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "✅ MLflow is now connected to Azure ML!\n0:\tlearn: 0.5366213\ttotal: 56.5ms\tremaining: 28.2s\n100:\tlearn: 0.1089053\ttotal: 487ms\tremaining: 1.92s\n200:\tlearn: 0.0760920\ttotal: 963ms\tremaining: 1.43s\n300:\tlearn: 0.0556229\ttotal: 1.44s\tremaining: 953ms\n400:\tlearn: 0.0429990\ttotal: 1.93s\tremaining: 475ms\n499:\tlearn: 0.0341632\ttotal: 2.4s\tremaining: 0us\n✅ CatBoost Accuracy: 0.9374\nClassification Report:\n               precision    recall  f1-score   support\n\n           0       0.94      1.00      0.97       960\n           1       0.00      0.00      0.00        62\n\n    accuracy                           0.94      1022\n   macro avg       0.47      0.50      0.48      1022\nweighted avg       0.88      0.94      0.91      1022\n\n✅ Model training and logging to MLflow complete!\n"
+        },
+        {
+          "output_type": "stream",
+          "name": "stderr",
+          "text": "2025/01/31 20:47:06 WARNING mlflow.models.model: Model logged without a signature and input example. Please set `input_example` parameter when logging the model to auto infer the model signature.\n2025/01/31 20:47:10 INFO mlflow.tracking._tracking_service.client: 🏃 View run dreamy_leather_33zmlyxv at: https://westeurope.api.azureml.ms/mlflow/v2.0/subscriptions/a9e6b3ce-7394-4a87-9482-c314c87e5743/resourceGroups/mlops-simple-flow/providers/Microsoft.MachineLearningServices/workspaces/mlops-simple-flow/#/experiments/e6dd27e2-d888-4c3f-9d31-c4d93c893e96/runs/8b7107fa-04ec-49a5-bc6b-ec2fc0e29267.\n2025/01/31 20:47:10 INFO mlflow.tracking._tracking_service.client: 🧪 View experiment at: https://westeurope.api.azureml.ms/mlflow/v2.0/subscriptions/a9e6b3ce-7394-4a87-9482-c314c87e5743/resourceGroups/mlops-simple-flow/providers/Microsoft.MachineLearningServices/workspaces/mlops-simple-flow/#/experiments/e6dd27e2-d888-4c3f-9d31-c4d93c893e96.\n"
+        }
+      ],
+      "execution_count": 19,
+      "metadata": {
+        "gather": {
+          "logged": 1738356430554
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "import pandas as pd\n",
+        "\n",
+        "# Check data types\n",
+        "print(df.dtypes)\n",
+        "\n",
+        "# Check unique values in each column (useful for detecting categorical features)\n",
+        "for col in df.columns:\n",
+        "    print(f\"{col}: {df[col].nunique()} unique values\")\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "gender                 int64\nage                  float64\nhypertension           int64\nheart_disease          int64\never_married           int64\nwork_type              int64\nResidence_type         int64\navg_glucose_level    float64\nbmi                  float64\nsmoking_status         int64\nstroke                 int64\ndtype: object\ngender: 3 unique values\nage: 104 unique values\nhypertension: 2 unique values\nheart_disease: 2 unique values\never_married: 2 unique values\nwork_type: 5 unique values\nResidence_type: 2 unique values\navg_glucose_level: 3979 unique values\nbmi: 418 unique values\nsmoking_status: 4 unique values\nstroke: 2 unique values\n"
+        }
+      ],
+      "execution_count": 4,
+      "metadata": {
+        "gather": {
+          "logged": 1738417355602
+        }
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "print(df.columns.to_list())\n"
+      ],
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": "['gender', 'age', 'hypertension', 'heart_disease', 'ever_married', 'work_type', 'Residence_type', 'avg_glucose_level', 'bmi', 'smoking_status', 'stroke']\n"
+        }
+      ],
+      "execution_count": 5,
+      "metadata": {
+        "gather": {
+          "logged": 1738417768197
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "name": "python310-sdkv2",
+      "language": "python",
+      "display_name": "Python 3.10 - SDK v2"
+    },
+    "language_info": {
+      "name": "python",
+      "version": "3.10.14",
+      "mimetype": "text/x-python",
+      "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+      },
+      "pygments_lexer": "ipython3",
+      "nbconvert_exporter": "python",
+      "file_extension": ".py"
+    },
+    "microsoft": {
+      "ms_spell_check": {
+        "ms_spell_check_language": "en"
+      },
+      "host": {
+        "AzureML": {
+          "notebookHasBeenCompleted": true
+        }
+      }
+    },
+    "nteract": {
+      "version": "nteract-front-end@1.0.0"
+    },
+    "kernel_info": {
+      "name": "python310-sdkv2"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 2
+}
